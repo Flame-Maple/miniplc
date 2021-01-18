@@ -1,10 +1,6 @@
 package miniplc0java.analyser;
 
-import miniplc0java.error.AnalyzeError;
-import miniplc0java.error.CompileError;
-import miniplc0java.error.ErrorCode;
-import miniplc0java.error.ExpectedTokenError;
-import miniplc0java.error.TokenizeError;
+import miniplc0java.error.*;
 import miniplc0java.instruction.Function;
 import miniplc0java.instruction.Instruction;
 import miniplc0java.instruction.Operation;
@@ -13,7 +9,10 @@ import miniplc0java.tokenizer.TokenType;
 import miniplc0java.tokenizer.Tokenizer;
 import miniplc0java.util.Pos;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 public final class Analyser {
 
@@ -41,6 +40,9 @@ public final class Analyser {
     int locaCount = 0;
 
     Object literal;
+
+    //字符串入栈长度
+    int length = 1;
 
     //是否进入函数
     boolean inFunc = false;
@@ -330,6 +332,59 @@ public final class Analyser {
         }
     }
 
+    //标准库函数调用
+    private void useLib(String name,Pos curPos) throws AnalyzeError {
+        if(name.equals("getint")){
+            instructions.add(new Instruction(Operation.scani));
+            stackSetoff1++;
+            isTrue = false;
+        }
+        else if(name.equals("getdouble")){
+            instructions.add(new Instruction(Operation.scanf));
+            stackSetoff1++;
+            isTrue = false;
+        }
+        else if(name.equals("getchar")){
+            instructions.add(new Instruction(Operation.scanc));
+            stackSetoff1++;
+            isTrue = false;
+        }
+        else if(name.equals("putint")){
+            if(recentType!=Type.Int)
+                throw new AnalyzeError(ErrorCode.WrongType,curPos);
+            instructions.add(new Instruction(Operation.printi));
+            stackSetoff1--;
+            isTrue = true;
+        }
+        else if(name.equals("putdouble")){
+            if(recentType!=Type.Double)
+                throw new AnalyzeError(ErrorCode.WrongType,curPos);
+            instructions.add(new Instruction(Operation.printf));
+            stackSetoff1--;
+            isTrue = true;
+        }
+        else if(name.equals("putchar")){
+            instructions.add(new Instruction(Operation.printc));
+            stackSetoff1--;
+            isTrue = true;
+        }
+        else if(name.equals("putstr")){
+            for(int i = 0;i<length;i++)
+            {
+                instructions.add(new Instruction(Operation.printc));
+                stackSetoff1--;
+            }
+            length = 1;
+            isTrue = true;
+        }
+        else if(name.equals("putln")){
+            instructions.add(new Instruction(Operation.push,(long)'\n'));
+            instructions.add(new Instruction(Operation.printc));
+        }
+        else
+            throw new AnalyzeError(ErrorCode.NotDeclared,curPos);
+    }
+
     //获取全局变量是否为常量
     private boolean isGlobalConstant(String name, Pos curPos) throws AnalyzeError {
         GlobalEntry entry = findGlobal(name);
@@ -518,7 +573,7 @@ public final class Analyser {
         {
             if(check(TokenType.CONST_KW) || check(TokenType.LET_KW))
                 analyseDeclStml();
-            else
+            else if(check(TokenType.FN_KW))
                 analyseFunction();
         }
         //throw new Error("Not implemented");
@@ -547,7 +602,7 @@ public final class Analyser {
                 //需要考虑取反数值的类型
                 if(locaTypeTable.get(stackSetoff1)==Type.Double)
                     instructions.add(new Instruction(Operation.subf));
-                else if(locaTypeTable.get(stackSetoff1)==Type.Double)
+                else if(locaTypeTable.get(stackSetoff1)==Type.Int)
                     instructions.add(new Instruction(Operation.subi));
                 else
                     throw new AnalyzeError(ErrorCode.WrongType,curPos);
@@ -562,6 +617,8 @@ public final class Analyser {
                     if(sy == null)
                     {
                         GlobalEntry gy = findGlobal(name);
+                        if(gy == null)
+                            throw new AnalyzeError(ErrorCode.NotDeclared,curPos);
                         Type type = gy.getType();
                         recentType = type;
                         int id = gy.getId();
@@ -600,59 +657,70 @@ public final class Analyser {
                 else if(check(TokenType.L_PAREN))
                 {
                     GlobalEntry g = findGlobal(name);
-                    Type type = g.getType();
-                    if(!g.isFunc)
-                        throw new AnalyzeError(ErrorCode.InvalidIdentifier,curPos);
-                    int id  = g.getId();
-                    expect(TokenType.L_PAREN);
-
-                    //压入返回值
-                    instructions.add(new Instruction(Operation.push,0L));
-                    stackSetoff2=0;
-                    stackSetoff1++;
-                    locaTypeTable.put(stackSetoff1,type);
-
-                    //存入函数返回值slot数
-                    slotTable.put(funcLevel,stackSetoff1);
-
-                    //保存原有类型表
-                    typeTable.put(funcLevel,locaTypeTable);
-
-                    //函数调用层次加一
-                    funcLevel++;
-
-                    //进入函数空间,清空原有的局域类型表
-                    locaTypeTable.clear();
-
-                    if(!check(TokenType.R_PAREN))
-                        analyseCallParamList();
-                    expect(TokenType.R_PAREN);
-                    funcLevel--;
-
-                    //重新取出原有的类型表
-                    locaTypeTable = typeTable.get(funcLevel);
-
-                    instructions.add(new Instruction(Operation.call,id));
-
-                    //获取原有的slot偏移
-                    stackSetoff1 = slotTable.get(funcLevel);
-                    //判断返回值类型
-                    if(type == Type.Void)
+                    //可能是库函数
+                    if(g == null)
                     {
-                        isSameType =  (recentType == Type.Void);
-                        recentType = Type.Void;
+                        expect(TokenType.L_PAREN);
+                        if(!check(TokenType.R_PAREN))
+                            analyseCallParamList();
+                        expect(TokenType.R_PAREN);
+                        useLib(name,curPos);
                     }
-                    else if(type == Type.Int)
-                    {
-                        isSameType =  (recentType == Type.Int);
-                        recentType = Type.Int;
+                    else{
+                        Type type = g.getType();
+                        if(!g.isFunc)
+                            throw new AnalyzeError(ErrorCode.InvalidIdentifier,curPos);
+                        int id  = g.getId();
+                        expect(TokenType.L_PAREN);
+
+                        //压入返回值
+                        instructions.add(new Instruction(Operation.push,0L));
+                        stackSetoff2=0;
+                        stackSetoff1++;
+                        locaTypeTable.put(stackSetoff1,type);
+
+                        //存入函数返回值slot数
+                        slotTable.put(funcLevel,stackSetoff1);
+
+                        //保存原有类型表
+                        typeTable.put(funcLevel,locaTypeTable);
+
+                        //函数调用层次加一
+                        funcLevel++;
+
+                        //进入函数空间,清空原有的局域类型表
+                        locaTypeTable.clear();
+
+                        if(!check(TokenType.R_PAREN))
+                            analyseCallParamList();
+                        expect(TokenType.R_PAREN);
+                        funcLevel--;
+
+                        //重新取出原有的类型表
+                        locaTypeTable = typeTable.get(funcLevel);
+
+                        instructions.add(new Instruction(Operation.call,id));
+
+                        //获取原有的slot偏移
+                        stackSetoff1 = slotTable.get(funcLevel);
+                        //判断返回值类型
+                        if(type == Type.Void)
+                        {
+                            isSameType =  (recentType == Type.Void);
+                            recentType = Type.Void;
+                        }
+                        else if(type == Type.Int)
+                        {
+                            isSameType =  (recentType == Type.Int);
+                            recentType = Type.Int;
+                        }
+                        else
+                        {
+                            isSameType =  (recentType == Type.Double);
+                            recentType = Type.Double;
+                        }
+                        isTrue = false;
                     }
-                    else
-                    {
-                        isSameType =  (recentType == Type.Double);
-                        recentType = Type.Double;
-                    }
-                    isTrue = false;
                 }
                 //单独标识符入栈
                 else{
@@ -661,6 +729,8 @@ public final class Analyser {
                     if(sy == null)
                     {
                         GlobalEntry gy = findGlobal(name);
+                        if(gy == null)
+                            throw new AnalyzeError(ErrorCode.NotDeclared,curPos);
                         Type type = gy.getType();
                         isSameType = (type == recentType);
                         recentType = type;
@@ -699,7 +769,7 @@ public final class Analyser {
                 }
             }
             //如果是字面量，规约为字面量表达式
-            else if(check(TokenType.UINT_LITERAL) || check(TokenType.DOUBLE_LITERAL) || check(TokenType.STRING_LITERAL))
+            else if(check(TokenType.UINT_LITERAL) || check(TokenType.DOUBLE_LITERAL) || check(TokenType.STRING_LITERAL) || check(TokenType.CHAR_LITERAL))
             {
                 analyseLiteralExpr();
                 isTrue = false;
@@ -807,11 +877,13 @@ public final class Analyser {
         if(check(TokenType.UINT_LITERAL))
         {
             Token t = expect(TokenType.UINT_LITERAL);
-            literal = Integer.parseInt(t.getValue().toString());;
+            literal = Integer.parseInt(t.getValue().toString());
             long l = (long)Integer.parseInt(t.getValue().toString());
             instructions.add(new Instruction(Operation.push,l));
             stackSetoff1++;
             locaTypeTable.put(stackSetoff1,Type.Int);
+            recentType = Type.Int;
+            isTrue = false;
         }
         else if(check(TokenType.DOUBLE_LITERAL))
         {
@@ -821,9 +893,24 @@ public final class Analyser {
             instructions.add(new Instruction(Operation.push,l));
             stackSetoff1++;
             locaTypeTable.put(stackSetoff1,Type.Double);
+            recentType = Type.Double;
+            isTrue = false;
         }
         else if(check(TokenType.STRING_LITERAL))
-            expect(TokenType.STRING_LITERAL);
+        {
+            Token t = expect(TokenType.STRING_LITERAL);
+            String str = t.getValue().toString();
+            length = str.length();
+            for(int i = length-1;i>=0;i--)
+                instructions.add(new Instruction(Operation.push,(long)str.charAt(i)));
+            isTrue = false;
+        }
+        else if(check(TokenType.CHAR_LITERAL))
+        {
+            Token t = expect(TokenType.CHAR_LITERAL);
+            instructions.add(new Instruction(Operation.push,(long)t.getValue()));
+            isTrue = false;
+        }
         else
             throw new TokenizeError(ErrorCode.InvalidInput,curPos);
     }
@@ -974,9 +1061,12 @@ public final class Analyser {
         analyseBlockStml();
         int mark2 = instructions.size();
         if(anti)
-            instructions.add(mark1,new Instruction(Operation.brfalse,mark2+1));
+        {
+
+            instructions.add(mark1,new Instruction(Operation.brfalse,mark2-mark1));
+        }
         else
-            instructions.add(mark1,new Instruction(Operation.brtrue,mark2+1));
+            instructions.add(mark1,new Instruction(Operation.brtrue,mark2-mark1));
         stackSetoff1--;
         //如果后面有else语句
         if(check(TokenType.ELSE_KW))
@@ -992,7 +1082,7 @@ public final class Analyser {
             {
                 analyseBlockStml();
                 int mark3 = instructions.size();
-                instructions.add(mark2+1,new Instruction(Operation.br,mark3+1));
+                instructions.add(mark2+1,new Instruction(Operation.br,mark3-mark2-1));
             }
             //其它报错
             else
@@ -1005,13 +1095,15 @@ public final class Analyser {
         expect(TokenType.WHILE_KW);
         int mark1 = instructions.size();
         analyseExpr();
-        analyseBlockStml();
-        instructions.add(new Instruction(Operation.br,mark1));
         int mark2 = instructions.size();
+        analyseBlockStml();
+        int mark3 = instructions.size();
+        instructions.add(new Instruction(Operation.br,mark1-mark3-2));
+        int mark4 = instructions.size() + 1;
         if(anti)
-            instructions.add(mark1,new Instruction(Operation.brfalse,mark2+1));
+            instructions.add(mark2,new Instruction(Operation.brfalse,mark4-mark2));
         else
-            instructions.add(mark1,new Instruction(Operation.brtrue,mark2+1));
+            instructions.add(mark2,new Instruction(Operation.brtrue,mark4-mark2));
         stackSetoff1--;
     }
 
@@ -1020,7 +1112,7 @@ public final class Analyser {
         var token = expect(TokenType.RETURN_KW);
         Pos curPos = token.getStartPos();
         if(check(TokenType.MINUS) || check(TokenType.IDENT) || check(TokenType.UINT_LITERAL) ||
-                check(TokenType.DOUBLE_LITERAL) || check(TokenType.STRING_LITERAL) || check(TokenType.L_PAREN))
+                check(TokenType.DOUBLE_LITERAL) || check(TokenType.STRING_LITERAL) || check(TokenType.L_PAREN) || check(TokenType.CHAR_LITERAL))
         {
             analyseExpr();
             instructions.add(new Instruction(Operation.arga,0));
@@ -1072,8 +1164,10 @@ public final class Analyser {
                 //如果表达式没意义
                 if(!isTrue)
                 {
-                    instructions.add(new Instruction(Operation.pop));
-                    stackSetoff1--;
+                    for(int i = 0;i<length;i++)
+                        instructions.add(new Instruction(Operation.pop));
+                    stackSetoff1-=length;
+                    length = 1;
                 }
             } 
             else if(check(TokenType.LET_KW) || check(TokenType.CONST_KW)) {

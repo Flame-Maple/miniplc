@@ -53,14 +53,16 @@ public class App {
         String version = "00 00 00 01\n";
         str = magic + version;
         List<Function> functions = analyser.getFuncs();
-        int funCount = functions.size();
         List<GlobalEntry> globalEntries = analyser.getGlobalTable();
         int globalcount = globalEntries.size();
         String globalCount = Instruction.toLexString(globalcount) + "\n";
         str+=globalCount;
         for(GlobalEntry item : globalEntries)
         {
-            str+=Instruction.toLexString(item.getId())+"\n";
+            if(item.isConstant())
+                str+="01\n";
+            else
+                str+="00\n";
             if(item.isFunc())
             {
                 String s = item.getValue().toString();

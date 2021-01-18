@@ -1,7 +1,10 @@
 let i: int;
-let j: int = 1;
+const j: int = 1;
 
 fn _start() -> void
 {
+    let x: int = 1;
+    putstr("123");
+    j = x + 1;
     i = j + 1;
 }
